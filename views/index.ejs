@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang='pt'>
+    <head>
+        <title>Webrtc</title>
+        <script src="/socket.io/socket.io.js"></script>
+    </head>
+    <body>
+        <video id="myVideoTag" autoplay></video>
+        <video id="theirVideoTag" autoplay></video>
+        <div>
+            <label>Seu nome:</label><input id="myName" type="text" />
+            <label>Messagem:</label><input id="myMessage" type="text" />
+            <input id="sendMessage" type="submit" />
+            <div id="chatArea">Todas mensagens: <br/></div>
+            <div id="signalingArea">Status da conexão do webrtc na sala: <br/></div>
+        </div>
+
+        <script>
+
+            var myVideoArea = document.querySelector("#myVideoTag");
+            var theirVideoArea = document.querySelector("#theirVideoTag");
+            var myName = document.querySelector("#myName");
+            var myMessage = document.querySelector("#myMessage");
+            var sendMessage = document.querySelector("#sendMessage");
+            var chatArea = document.querySelector("#chatArea");
+            var signalingArea = document.querySelector("#signalingArea");
+            var ROOM = "chat";
+            var SIGNAL_ROOM = "signal_room";
+            var configuration = {
+                'iceServers': [{
+                    'url': 'stun:stun.l.google.com:19302'
+                }]
+            };
+            var rtcPeerConnection;
+            
+            // Configurações de conexão socket.io
+            io = io.connect();
+            io.emit('ready', {
+                "chat_room": ROOM,
+                "signal_room": SIGNAL_ROOM
+            })
+
+            // Envia o primeiro status de conexão com webrtc
+            io.emit('signal', {
+                "type": "user_here",
+                "message": "Vamos iniciar uma ligação?"
+            })
+
+            // Fica escutando as mensagens do status do webrtc que chegam na requisição e devolver para tela pelo displayMessage()
+            io.on('signaling_message', function(data) {
+                displaySignalMessage("Status atual: " + data.message);
+
+                // Configuração do RTC ponto de conexão objeto
+                // Verificar se já existe conexão com a sala
+                if (!rtcPeerConnection) {
+                    startSignaling();
+                };
+
+                // Aceitar uma oferta de ligação de outro local
+                if (data.type != 'user_here') {
+                    var message = JSON.parse(data.message);
+                    if (message.sdp) {
+                        rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp), function() {
+                            // Se recebemos uma oferta de ligação, precisamos responder
+                            if (rtcPeerConnection.remoteDescription.type == 'offer') {
+                                rtcPeerConnection.createAnswer(sendLocalDesc, logError);
+                            };
+                        }, logError);
+                    } else {
+                        rtcPeerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+                    };
+                };
+            });
+            
+            function startSignaling() {
+                displaySignalMessage("Iniciando conexão...");
+
+                rtcPeerConnection = new webkitRTCPeerConnection(configuration);
+
+                // Enviar o usuário para o ponto de conexão
+                rtcPeerConnection.onicecandidate = function(e) {
+
+                    if (e.candidate) {
+                        io.emit('signal', {
+                            "type": "ice candidate",
+                            "message": JSON.stringify({
+                                'candidate': e.candidate,                            
+                            }),
+                            "room": SIGNAL_ROOM,
+                        })
+
+                        displaySignalMessage("Conectou usuário...");
+                    }
+                }
+
+                // Error de conexão de usuário ao ponto de conexão
+                rtcPeerConnection.onnegotiationneeded = function(e) {
+                    displaySignalMessage("Realizando a ligação de conexão...")
+
+                    // Criando a oferta de ligação
+                    rtcPeerConnection.createOffer(sendLocalDesc, logError);
+                };
+
+                // Adicionando outro usuário ao stream
+                rtcPeerConnection.onaddstream = function(e) {
+                    displaySignalMessage("Adicionando outro usuário ao stream...")
+                    theirVideoArea.src = URL.createObjectURL(e.stream);
+                }
+
+                // Escolhe as configurações conforme o navegador
+                navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+
+                // Configuraçãoes inicias para video e audio no webrtc
+                var contraints = { 
+                    audio: true,
+                    video: true
+                };           
+
+                function onSucess(stream) {
+                    displaySignalMessage('Conectado ao stream...');
+                    myVideoArea.src = URL.createObjectURL(stream);
+                    rtcPeerConnection.addStream(stream);
+                };
+                
+                navigator.getUserMedia(contraints, onSucess, logError);
+                
+            };
+
+            // Envio de dados do desktop para conexão com webrtc
+            function sendLocalDesc() {
+                rtcPeerConnection.sendLocalDesc(desc, function() {
+                    displaySignalMessage("Enviando descrição local");
+
+                    io.emit('signal', {
+                        "type": "SDP",
+                        "message": JSON.stringify({
+                            'spd': rtcPeerConnection.localDescription,                            
+                        }),
+                        "room": SIGNAL_ROOM,
+                    })
+                }, logError);
+            }
+
+            // Console de error nos callbacks de conexão ao webrtc
+            function logError(error) {
+                displaySignalMessage(error.name + ": " + error.message);
+            }
+
+            // Fica escutando as mensagens do usuário que chegam na requisição e devolver para tela pelo displayMessage()
+            io.on('announce', function(data) {
+                displayMessage(data.message);
+            });
+
+            // Fica escutando mensagens novas chegar para o front
+            io.on('message', function(data) {
+                displayMessage(data.author + ": " + data.message);
+            });
+            
+            // Função para mostrar mensagens na tela sobre o status do webrtc
+            function displaySignalMessage(message) {
+                signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + message;
+            };
+
+            // Função para mostrar mensagens na tela
+            function displayMessage(message) {
+                chatArea.innerHTML = chatArea.innerHTML + "<br/>" + message;
+            };
+
+            // Enviar mensagem para api via socket.io e express
+            sendMessage.addEventListener('click', function(e) {
+                io.emit('send' , {
+                    "author": myName.value,
+                    "message": myMessage.value
+                });
+
+                e.preventDefault();
+            });
+
+            /* Conexão basica de audio e video no navegador
+
+                // Escolhe as configurações conforme o navegador
+                navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+                
+                // Configuraçãoes inicias para video e audio no webrtc
+                var contraints = { 
+                    audio: false,
+                    video: false
+                };           
+
+                function onSucess(stream) {
+                    console.log('Conectado ao stream');
+                    videoArea.src = window.URL.createObjectURL(stream);
+                    videoArea.play();
+                };
+                
+                function onError(error) {
+                    console.log('Erro em getUserMedia: ', error);
+                };
+                
+                navigator.getUserMedia(contraints, onSucess, onError);
+            
+            */
+        </script>
+    </body>
+</html>
