@@ -5,8 +5,11 @@
         <script src="/socket.io/socket.io.js"></script>
     </head>
     <body>
+        <h3>Meu video:</h3>
         <video id="myVideoTag" autoplay></video>
+        <h3>Outro video:</h3>        
         <video id="theirVideoTag" autoplay></video>
+        <h3>Chat:</h3>        
         <div>
             <label>Seu nome:</label><input id="myName" type="text" />
             <label>Messagem:</label><input id="myMessage" type="text" />
@@ -31,7 +34,7 @@
                     'url': 'stun:stun.l.google.com:19302'
                 }]
             };
-            var rtcPeerConnection;
+            var pc;
             
             // Configurações de conexão socket.io
             io = io.connect();
@@ -52,7 +55,7 @@
 
                 // Configuração do RTC ponto de conexão objeto
                 // Verificar se já existe conexão com a sala
-                if (!rtcPeerConnection) {
+                if (!pc) {
                     startSignaling();
                 };
 
@@ -60,14 +63,14 @@
                 if (data.type != 'user_here') {
                     var message = JSON.parse(data.message);
                     if (message.sdp) {
-                        rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp), function() {
+                        pc.setRemoteDescription(new RTCSessionDescription(message.sdp), function() {
                             // Se recebemos uma oferta de ligação, precisamos responder
-                            if (rtcPeerConnection.remoteDescription.type == 'offer') {
-                                rtcPeerConnection.createAnswer(sendLocalDesc, logError);
+                            if (pc.remoteDescription.type == 'offer') {
+                                pc.createAnswer(sendLocalDesc, logError);
                             };
                         }, logError);
                     } else {
-                        rtcPeerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+                        pc.addIceCandidate(new RTCIceCandidate(message.candidate));
                     };
                 };
             });
@@ -75,10 +78,10 @@
             function startSignaling() {
                 displaySignalMessage("Iniciando conexão...");
 
-                rtcPeerConnection = new webkitRTCPeerConnection(configuration);
+                pc = new RTCPeerConnection(configuration);
 
                 // Enviar o usuário para o ponto de conexão
-                rtcPeerConnection.onicecandidate = function(e) {
+                pc.onicecandidate = function(e) {
 
                     if (e.candidate) {
                         io.emit('signal', {
@@ -94,15 +97,15 @@
                 }
 
                 // Error de conexão de usuário ao ponto de conexão
-                rtcPeerConnection.onnegotiationneeded = function(e) {
+                pc.onnegotiationneeded = function(e) {
                     displaySignalMessage("Realizando a ligação de conexão...")
 
                     // Criando a oferta de ligação
-                    rtcPeerConnection.createOffer(sendLocalDesc, logError);
+                    pc.createOffer(sendLocalDesc, logError);
                 };
 
                 // Adicionando outro usuário ao stream
-                rtcPeerConnection.onaddstream = function(e) {
+                pc.onaddstream = function(e) {
                     displaySignalMessage("Adicionando outro usuário ao stream...")
                     theirVideoArea.src = URL.createObjectURL(e.stream);
                 }
@@ -112,29 +115,27 @@
 
                 // Configuraçãoes inicias para video e audio no webrtc
                 var contraints = { 
-                    audio: true,
-                    video: false
+                    audio: false,
+                    video: true
                 };           
-
-                function onSucess(stream) {
+                
+                navigator.getUserMedia(contraints, function(stream) {
                     displaySignalMessage('Conectado ao stream...');
                     myVideoArea.src = URL.createObjectURL(stream);
-                    rtcPeerConnection.addStream(stream);
-                };
-                
-                navigator.getUserMedia(contraints, onSucess, logError);
+                    pc.addStream(stream);
+                }, logError);
                 
             };
 
             // Envio de dados do desktop para conexão com webrtc
             function sendLocalDesc() {
-                rtcPeerConnection.sendLocalDesc(desc, function() {
+                pc.setLocalDescription(desc, function() {
                     displaySignalMessage("Enviando descrição local");
 
                     io.emit('signal', {
                         "type": "SDP",
                         "message": JSON.stringify({
-                            'spd': rtcPeerConnection.localDescription,                            
+                            'spd': pc.localDescription,                            
                         }),
                         "room": SIGNAL_ROOM,
                     })
@@ -156,16 +157,16 @@
                 displayMessage(data.author + ": " + data.message);
             });
             
-            // Função para mostrar mensagens na tela sobre o status do webrtc
-            function displaySignalMessage(message) {
-                signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + message;
-            };
-
             // Função para mostrar mensagens na tela
             function displayMessage(message) {
                 chatArea.innerHTML = chatArea.innerHTML + "<br/>" + message;
             };
-
+            
+            // Função para mostrar mensagens na tela sobre o status do webrtc
+            function displaySignalMessage(message) {
+                signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + message;
+            };
+            
             // Enviar mensagem para api via socket.io e express
             sendMessage.addEventListener('click', function(e) {
                 io.emit('send' , {

@@ -9,6 +9,8 @@ app.get('/', (req, res) => {
     res.render('index.ejs')
 })
 
+app.listen(port)
+
 // Fica informando novos usuários na sala
 app.io.route('ready', (req) => {
     req.io.join(req.data.chat_room)
@@ -28,11 +30,10 @@ app.io.route('send', (req) => {
 
 // Informando o status da conexão do webrtc na sala
 app.io.route('signal', (req) => {
-    app.io.room(req.data.room).broadcast('signaling_message', {
+    console.log("type", req.data.type)
+    req.io.room(req.data.room).broadcast('signaling_message', {
         type: req.data.type,
         message: req.data.message,
     })
 })
 
-
-app.listen(port)
